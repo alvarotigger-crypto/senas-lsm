@@ -85,6 +85,7 @@
   </div>
   <div class="card">
     <b>2. Graba ejemplos de <span id="selLetter" style="color:var(--acc)">A</span></b>
+    <span class="mut" id="selInfo"></span>
     <p class="mut">Haz la seña frente a la cámara. Mientras graba, mueve un poco la mano: acércala, aléjala, gírala un poquito. Así aprende mejor.</p>
     <div class="bar" style="margin-bottom:10px"><div id="recBar"></div></div>
     <div class="row">
@@ -189,10 +190,10 @@ function dist(a,b){ let d=0; for(let i=0;i<a.length;i++){ const t=a[i]-b[i]; d+=
 
 /* ---------- Modelo: k vecinos más cercanos ---------- */
 let model = null; // {X:[Float32Array], y:[letter], thr}
-function knn(X, y, f, k=K, skip=-1){
+function knn(X, y, f, k=K, skipTake=null, takes=null){
   const best = []; // [d, idx]
   for(let i=0;i<X.length;i++){
-    if(i===skip) continue;
+    if(skipTake!==null && takes[i]===skipTake) continue;
     const d = dist(X[i], f);
     if(best.length<k){ best.push([d,i]); best.sort((a,b)=>a[0]-b[0]); }
     else if(d<best[k-1][0]){ best[k-1]=[d,i]; best.sort((a,b)=>a[0]-b[0]); }
@@ -206,22 +207,45 @@ function train(){
   const counts = countByLetter();
   const use = db.letters.filter(l => (counts[l]||0) >= MIN_TO_TRAIN);
   if(use.length < 2) return { error: `Necesitas al menos 2 letras con ${MIN_TO_TRAIN}+ ejemplos.` };
-  const X=[], y=[];
-  for(const s of db.samples) if(use.includes(s.l)){ X.push(features(s.lm, s.h)); y.push(s.l); }
-  // Validación "deja uno fuera": prueba cada ejemplo contra todos los demás
+  const X=[], y=[], takes=[];
+  const tk = takeIds();
+  db.samples.forEach((s,i) => { if(use.includes(s.l)){ X.push(features(s.lm, s.h)); y.push(s.l); takes.push(tk[i]); } });
+  const nTakes = {}; for(const l of use) nTakes[l] = new Set(takes.filter((t,i)=>y[i]===l)).size;
+  // Validación realista "deja una toma fuera": cada ejemplo se prueba SIN los de su misma toma.
+  // Los ejemplos de una misma toma son casi idénticos, así que compararlos entre sí da un 100% engañoso.
+  // Solo se puede medir en letras con 2 o más tomas.
   const per = {}; const conf = {}; const nn = [];
   for(let i=0;i<X.length;i++){
-    const r = knn(X, y, X[i], K, i);
+    if(nTakes[y[i]] < 2) continue;
+    const r = knn(X, y, X[i], K, takes[i], takes);
     nn.push(r.nearest);
     per[y[i]] = per[y[i]] || {ok:0,n:0}; per[y[i]].n++;
     if(r.label===y[i]) per[y[i]].ok++;
     else { const key = y[i]+"→"+r.label; conf[key]=(conf[key]||0)+1; }
   }
   nn.sort((a,b)=>a-b);
-  const thr = Math.max(0.6, nn[Math.floor(nn.length*0.95)] * 2.2); // más lejos que esto = "no reconocida"
+  const thr = nn.length ? Math.max(0.6, nn[Math.floor(nn.length*0.95)] * 1.5) : 1.2; // más lejos que esto = "no reconocida"
   model = { X, y, thr };
   const ok = Object.values(per).reduce((a,b)=>a+b.ok,0);
-  return { use, per, conf, acc: ok/X.length, n: X.length };
+  const tested = Object.values(per).reduce((a,b)=>a+b.n,0);
+  return { use, per, conf, nTakes, acc: tested ? ok/tested : null, n: X.length };
+}
+// Agrupa ejemplos en "tomas": los nuevos traen su id de toma (k); los viejos se agrupan por tiempo.
+function takeIds(){
+  const ids = new Array(db.samples.length);
+  const byLetter = {};
+  db.samples.forEach((s,i) => { (byLetter[s.l] = byLetter[s.l] || []).push(i); });
+  for(const l in byLetter){
+    const idx = byLetter[l].slice().sort((a,b)=>db.samples[a].t - db.samples[b].t);
+    let n = 0, prev = null;
+    for(const i of idx){
+      const s = db.samples[i];
+      if(s.k != null){ ids[i] = l+"#k"+s.k; continue; }
+      if(prev !== null && s.t - db.samples[prev].t > 10000) n++;
+      ids[i] = l+"#"+n; prev = i;
+    }
+  }
+  return ids;
 }
 
 /* ---------- UI: letras ---------- */
@@ -239,6 +263,8 @@ function renderGrid(){
     g.appendChild(b);
   }
   $("selLetter").textContent = selected;
+  const tk = takeIds(); const nt = new Set(tk.filter((t,i)=>db.samples[i].l===selected)).size;
+  $("selInfo").textContent = ` · ${c[selected]||0} ejemplos en ${nt} toma${nt===1?"":"s"}` + (nt===1 ? " (graba otra para medirla)" : "");
   const done = db.letters.filter(l => (c[l]||0) >= PER_LETTER).length;
   $("totalCount").textContent = `${done}/${db.letters.length} listas · ${db.samples.length} ejemplos`;
   $("lettersInp").value = db.letters.join(", ");
@@ -339,7 +365,7 @@ $("recBtn").onclick = async () => {
   const letter = selected; $("recBtn").disabled = true;
   for(const n of [3,2,1]){ $("countdown").textContent = n; await new Promise(r=>setTimeout(r,700)); }
   $("countdown").textContent = "";
-  rec = { letter, got:0, last:0 };
+  rec = { letter, got:0, last:0, k:Date.now() };
   setStatus(`Grabando ${letter}… mueve un poquito la mano.`, "warn");
 };
 function onRecFrame(){
@@ -348,7 +374,7 @@ function onRecFrame(){
   if(!current){ setStatus(`Grabando ${rec.letter}… no veo tu mano 👀`, "warn"); return; }
   if(now - rec.last < 90) return;
   rec.last = now;
-  db.samples.push({ l:rec.letter, lm:current.lm, h:current.h, t:Date.now() });
+  db.samples.push({ l:rec.letter, lm:current.lm, h:current.h, t:Date.now(), k:rec.k });
   rec.got++;
   $("recBar").style.width = (rec.got/PER_LETTER*100)+"%";
   if(rec.got >= PER_LETTER){
@@ -376,10 +402,16 @@ function showReport(r){
   if(r.error){ box.innerHTML = `<span class="warn">${r.error}</span>`; return; }
   const pct = x => Math.round(x*100)+"%";
   const cls = x => x>=0.9 ? "ok" : x>=0.7 ? "warn" : "badc";
-  let h = `<b>Precisión estimada: <span class="${cls(r.acc)}">${pct(r.acc)}</span></b>
-           <p class="mut">${r.use.length} letras · ${r.n} ejemplos. Se calcula probando cada ejemplo contra los demás.</p>
-           <table><tr><th>Letra</th><th>Acierta</th><th></th></tr>`;
-  for(const l of r.use){ const p=r.per[l]; const a=p.ok/p.n; h += `<tr><td><b>${l}</b></td><td class="${cls(a)}">${pct(a)}</td><td class="mut">${p.ok}/${p.n}</td></tr>`; }
+  let h = r.acc === null
+    ? `<b>Modelo listo ✅</b><p class="warn">Todavía no puedo medir la precisión: graba una <b>segunda toma</b> de al menos una letra.</p>`
+    : `<b>Precisión real estimada: <span class="${cls(r.acc)}">${pct(r.acc)}</span></b>`;
+  h += `<p class="mut">${r.use.length} letras · ${r.n} ejemplos. Cada toma se prueba contra las <b>otras</b> tomas, como si fuera una seña nueva. Por eso cada letra necesita al menos 2 tomas, de preferencia con otra luz, otra ropa o la otra mano.</p>
+        <table><tr><th>Letra</th><th>Tomas</th><th>Acierta</th></tr>`;
+  for(const l of r.use){
+    const p = r.per[l];
+    if(p){ const a=p.ok/p.n; h += `<tr><td><b>${l}</b></td><td class="mut">${r.nTakes[l]}</td><td class="${cls(a)}">${pct(a)} <span class="mut">(${p.ok}/${p.n})</span></td></tr>`; }
+    else h += `<tr><td><b>${l}</b></td><td class="mut">${r.nTakes[l]}</td><td class="warn">Graba otra toma</td></tr>`;
+  }
   h += `</table>`;
   const top = Object.entries(r.conf).sort((a,b)=>b[1]-a[1]).slice(0,5);
   if(top.length){
