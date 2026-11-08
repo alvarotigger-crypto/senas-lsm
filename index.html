@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Señas LSM · Fase 1</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#181b22; --line:#2a2f3a; --txt:#e8eaf0; --mut:#9aa3b2;
+    --acc:#4f8cff; --ok:#2fbf71; --warn:#f0a531; --bad:#e5484d;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--txt);font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  header{padding:12px 14px 6px;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+  header h1{font-size:19px;margin:0}
+  header small{color:var(--mut)}
+  #status{padding:0 14px 8px;color:var(--mut);font-size:14px;min-height:20px}
+  .stage{position:relative;margin:0 10px;border-radius:14px;overflow:hidden;background:#000;aspect-ratio:4/3}
+  .stage video,.stage canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+  .stage.mirror video,.stage.mirror canvas{transform:scaleX(-1)}
+  .overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
+  #countdown{font-size:110px;font-weight:800;color:#fff;text-shadow:0 4px 20px #000}
+  #startBox{pointer-events:auto;text-align:center;padding:20px}
+  .camBtns{position:absolute;right:8px;top:8px;display:flex;gap:6px}
+  .chip{background:#000a;color:#fff;border:1px solid #fff3;border-radius:999px;padding:6px 10px;font-size:13px}
+  nav{display:flex;margin:10px;background:var(--panel);border-radius:12px;padding:4px;gap:4px}
+  nav button{flex:1;background:none;border:0;color:var(--mut);padding:10px 4px;border-radius:9px;font-size:15px;font-weight:600}
+  nav button.on{background:var(--acc);color:#fff}
+  section{display:none;padding:0 12px 30px}
+  section.on{display:block}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(52px,1fr));gap:6px}
+  .grid button{position:relative;background:#222733;border:1px solid var(--line);color:var(--txt);border-radius:10px;padding:10px 0 14px;font-size:20px;font-weight:700}
+  .grid button.sel{outline:2px solid var(--acc);background:#1d2a45}
+  .grid button .n{position:absolute;left:0;right:0;bottom:2px;font-size:11px;font-weight:500;color:var(--mut)}
+  .grid button.full .n{color:var(--ok)}
+  .btn{display:inline-block;background:var(--acc);color:#fff;border:0;border-radius:10px;padding:12px 16px;font-size:16px;font-weight:600}
+  .btn.sec{background:#2a3040}
+  .btn.bad{background:var(--bad)}
+  .btn:disabled{opacity:.45}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .wide{width:100%}
+  .bar{height:10px;background:#2a3040;border-radius:99px;overflow:hidden}
+  .bar>div{height:100%;width:0;background:var(--ok);transition:width .15s}
+  .mut{color:var(--mut);font-size:14px}
+  #bigLetter{font-size:120px;font-weight:800;text-align:center;line-height:1;min-height:120px}
+  #typed{font-size:28px;font-weight:600;min-height:44px;word-break:break-all;background:#0b0d11;border-radius:10px;padding:8px 10px;letter-spacing:2px}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  td,th{padding:6px 4px;border-bottom:1px solid var(--line);text-align:left}
+  input[type=text]{width:100%;background:#0b0d11;color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:10px;font-size:16px}
+  .ok{color:var(--ok)} .warn{color:var(--warn)} .badc{color:var(--bad)}
+</style>
+</head>
+<body>
+<header><h1>✋ Señas LSM</h1><small>Fase 1 · abecedario sin movimiento</small></header>
+<div id="status">Cargando…</div>
+
+<div class="stage mirror" id="stage">
+  <video id="video" playsinline muted autoplay></video>
+  <canvas id="canvas"></canvas>
+  <div class="overlay"><div id="countdown"></div></div>
+  <div class="overlay" id="startOverlay">
+    <div id="startBox">
+      <p class="mut" style="color:#ccd">Toca para encender la cámara.<br>Funciona sin internet una vez cargada.</p>
+      <button class="btn" id="startBtn" disabled>Iniciar cámara</button>
+    </div>
+  </div>
+  <div class="camBtns"><button class="chip" id="flipBtn" style="display:none">↺ Cambiar cámara</button></div>
+</div>
+
+<nav>
+  <button data-tab="grabar" class="on">Grabar</button>
+  <button data-tab="entrenar">Entrenar</button>
+  <button data-tab="reconocer">Reconocer</button>
+  <button data-tab="datos">Datos</button>
+</nav>
+
+<!-- GRABAR -->
+<section id="grabar" class="on">
+  <div class="card">
+    <div class="row" style="justify-content:space-between;margin-bottom:8px">
+      <b>1. Elige una letra</b><span class="mut" id="totalCount"></span>
+    </div>
+    <div class="grid" id="letterGrid"></div>
+  </div>
+  <div class="card">
+    <b>2. Graba ejemplos de <span id="selLetter" style="color:var(--acc)">A</span></b>
+    <p class="mut">Haz la seña frente a la cámara. Mientras graba, mueve un poco la mano: acércala, aléjala, gírala un poquito. Así aprende mejor.</p>
+    <div class="bar" style="margin-bottom:10px"><div id="recBar"></div></div>
+    <div class="row">
+      <button class="btn" id="recBtn" disabled>● Grabar <span id="recN">30</span></button>
+      <button class="btn sec" id="undoBtn">Borrar esta letra</button>
+    </div>
+  </div>
+</section>
+
+<!-- ENTRENAR -->
+<section id="entrenar">
+  <div class="card">
+    <b>Entrenar el modelo</b>
+    <p class="mut">Usa todas las letras que tengan al menos 10 ejemplos. Después te dice qué tan bien distingue cada letra y cuáles confunde.</p>
+    <button class="btn wide" id="trainBtn">Entrenar</button>
+  </div>
+  <div class="card" id="trainReport" style="display:none"></div>
+</section>
+
+<!-- RECONOCER -->
+<section id="reconocer">
+  <div class="card">
+    <div id="bigLetter">·</div>
+    <div class="bar"><div id="confBar"></div></div>
+    <p class="mut" id="confTxt" style="text-align:center;margin:6px 0 0">Entrena primero y luego haz una seña.</p>
+  </div>
+  <div class="card">
+    <b>Deletreo</b>
+    <p class="mut">Sostén la letra un segundo para escribirla. Para repetir una letra, baja la mano y vuelve a hacerla.</p>
+    <div id="typed"></div>
+    <div class="row" style="margin-top:8px">
+      <button class="btn sec" id="spaceBtn">Espacio</button>
+      <button class="btn sec" id="backBtn">⌫ Borrar</button>
+      <button class="btn sec" id="clearBtn">Limpiar</button>
+    </div>
+  </div>
+</section>
+
+<!-- DATOS -->
+<section id="datos">
+  <div class="card">
+    <b>Respaldo</b>
+    <p class="mut">Tus ejemplos se guardan en este navegador. Exporta un respaldo seguido: lo vas a necesitar para las fases 2 y 3, o para pasarlo a otro dispositivo.</p>
+    <div class="row">
+      <button class="btn" id="exportBtn">Exportar respaldo</button>
+      <label class="btn sec">Importar<input type="file" id="importInp" accept=".json,application/json" hidden></label>
+    </div>
+    <p class="mut" id="dataMsg"></p>
+  </div>
+  <div class="card">
+    <b>Letras a reconocer</b>
+    <p class="mut">Sepáralas con comas. Por defecto van las del abecedario LSM que no llevan movimiento; ajústalas a como tú las haces.</p>
+    <input type="text" id="lettersInp">
+    <div class="row" style="margin-top:8px"><button class="btn sec" id="lettersSave">Guardar letras</button></div>
+  </div>
+  <div class="card">
+    <b>Zona de peligro</b>
+    <div class="row" style="margin-top:8px"><button class="btn bad" id="wipeBtn">Borrar todos los ejemplos</button></div>
+  </div>
+</section>
+
+<script type="module">
+import { HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.2.2/vision_bundle.mjs";
+
+/* ---------- Config ---------- */
+const DEFAULT_LETTERS = ["A","B","C","D","E","F","G","H","I","L","M","N","O","P","R","S","T","U","V","W","Y"];
+const PER_LETTER = 30;        // ejemplos por toma
+const MIN_TO_TRAIN = 10;      // mínimo por letra para entrenar
+const K = 5;
+const STORE = "senas-lsm-v1";
+const $ = id => document.getElementById(id);
+
+/* ---------- Datos ---------- */
+let db = { version:1, letters:[...DEFAULT_LETTERS], samples:[] }; // sample: {l, lm:[63], h, t}
+function load(){
+  try{ const s = localStorage.getItem(STORE); if(s){ const d = JSON.parse(s); if(d && Array.isArray(d.samples)) db = d; } }catch(e){}
+  if(!Array.isArray(db.letters) || !db.letters.length) db.letters = [...DEFAULT_LETTERS];
+}
+function save(){
+  try{ localStorage.setItem(STORE, JSON.stringify(db)); }
+  catch(e){ setStatus("⚠️ No se pudo guardar en el navegador. Exporta un respaldo.", "warn"); }
+}
+load();
+
+/* ---------- Características ----------
+   21 puntos (x,y,z) → relativo a la muñeca, escalado por el tamaño de la palma,
+   y la mano izquierda se refleja para que ambas manos cuenten igual. */
+function features(lm, hand){
+  const w = [lm[0],lm[1],lm[2]];
+  const m = [lm[27]-w[0], lm[28]-w[1], lm[29]-w[2]];          // nudillo del dedo medio (punto 9)
+  const s = Math.hypot(m[0],m[1],m[2]) || 1;
+  const flip = hand === "Left" ? -1 : 1;
+  const f = new Float32Array(63);
+  for(let i=0;i<21;i++){
+    f[i*3]   = flip*(lm[i*3]  -w[0])/s;
+    f[i*3+1] =      (lm[i*3+1]-w[1])/s;
+    f[i*3+2] =      (lm[i*3+2]-w[2])/s;
+  }
+  return f;
+}
+function dist(a,b){ let d=0; for(let i=0;i<a.length;i++){ const t=a[i]-b[i]; d+=t*t; } return Math.sqrt(d); }
+
+/* ---------- Modelo: k vecinos más cercanos ---------- */
+let model = null; // {X:[Float32Array], y:[letter], thr}
+function knn(X, y, f, k=K, skip=-1){
+  const best = []; // [d, idx]
+  for(let i=0;i<X.length;i++){
+    if(i===skip) continue;
+    const d = dist(X[i], f);
+    if(best.length<k){ best.push([d,i]); best.sort((a,b)=>a[0]-b[0]); }
+    else if(d<best[k-1][0]){ best[k-1]=[d,i]; best.sort((a,b)=>a[0]-b[0]); }
+  }
+  const votes = {}; let tot=0;
+  for(const [d,i] of best){ const wgt = 1/(d+1e-3); votes[y[i]]=(votes[y[i]]||0)+wgt; tot+=wgt; }
+  let top=null, tv=0; for(const l in votes) if(votes[l]>tv){ tv=votes[l]; top=l; }
+  return { label: top, conf: tot? tv/tot : 0, nearest: best.length? best[0][0] : Infinity };
+}
+function train(){
+  const counts = countByLetter();
+  const use = db.letters.filter(l => (counts[l]||0) >= MIN_TO_TRAIN);
+  if(use.length < 2) return { error: `Necesitas al menos 2 letras con ${MIN_TO_TRAIN}+ ejemplos.` };
+  const X=[], y=[];
+  for(const s of db.samples) if(use.includes(s.l)){ X.push(features(s.lm, s.h)); y.push(s.l); }
+  // Validación "deja uno fuera": prueba cada ejemplo contra todos los demás
+  const per = {}; const conf = {}; const nn = [];
+  for(let i=0;i<X.length;i++){
+    const r = knn(X, y, X[i], K, i);
+    nn.push(r.nearest);
+    per[y[i]] = per[y[i]] || {ok:0,n:0}; per[y[i]].n++;
+    if(r.label===y[i]) per[y[i]].ok++;
+    else { const key = y[i]+"→"+r.label; conf[key]=(conf[key]||0)+1; }
+  }
+  nn.sort((a,b)=>a-b);
+  const thr = Math.max(0.6, nn[Math.floor(nn.length*0.95)] * 2.2); // más lejos que esto = "no reconocida"
+  model = { X, y, thr };
+  const ok = Object.values(per).reduce((a,b)=>a+b.ok,0);
+  return { use, per, conf, acc: ok/X.length, n: X.length };
+}
+
+/* ---------- UI: letras ---------- */
+let selected = db.letters[0];
+function countByLetter(){ const c={}; for(const s of db.samples) c[s.l]=(c[s.l]||0)+1; return c; }
+function renderGrid(){
+  const c = countByLetter(); const g = $("letterGrid"); g.innerHTML="";
+  if(!db.letters.includes(selected)) selected = db.letters[0];
+  for(const l of db.letters){
+    const b = document.createElement("button");
+    b.innerHTML = `${l}<span class="n">${c[l]||0}</span>`;
+    if(l===selected) b.classList.add("sel");
+    if((c[l]||0) >= PER_LETTER) b.classList.add("full");
+    b.onclick = () => { selected = l; renderGrid(); };
+    g.appendChild(b);
+  }
+  $("selLetter").textContent = selected;
+  const done = db.letters.filter(l => (c[l]||0) >= PER_LETTER).length;
+  $("totalCount").textContent = `${done}/${db.letters.length} listas · ${db.samples.length} ejemplos`;
+  $("lettersInp").value = db.letters.join(", ");
+}
+renderGrid();
+
+/* ---------- Pestañas ---------- */
+let tab = "grabar";
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
+  tab = b.dataset.tab;
+  document.querySelectorAll("nav button").forEach(x=>x.classList.toggle("on", x===b));
+  document.querySelectorAll("section").forEach(s=>s.classList.toggle("on", s.id===tab));
+  if(tab==="reconocer" && !model){ const r = train(); if(!r.error) showReport(r); }
+});
+
+function setStatus(t, cls=""){ const s=$("status"); s.textContent=t; s.className=cls; }
+
+/* ---------- Cámara + MediaPipe ---------- */
+const video = $("video"), canvas = $("canvas"), ctx = canvas.getContext("2d");
+let landmarker = null, stream = null, facing = "user", lastVideoTime = -1;
+let current = null; // {lm:[63], h, pts}
+
+async function initModel(){
+  try{
+    setStatus("Cargando el detector de manos… (la primera vez tarda un poco)");
+    const files = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.2.2/wasm");
+    const opts = d => ({
+      baseOptions:{ modelAssetPath:"https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task", delegate:d },
+      runningMode:"VIDEO", numHands:1,
+      minHandDetectionConfidence:0.5, minHandPresenceConfidence:0.5, minTrackingConfidence:0.5
+    });
+    try{ landmarker = await HandLandmarker.createFromOptions(files, opts("GPU")); }
+    catch(e){ landmarker = await HandLandmarker.createFromOptions(files, opts("CPU")); }
+    $("startBtn").disabled = false;
+    setStatus("Listo. Enciende la cámara.", "ok");
+  }catch(e){
+    console.error(e);
+    setStatus("❌ No se pudo cargar el detector. Revisa tu conexión a internet y recarga la página.", "badc");
+  }
+}
+
+async function startCam(){
+  if(!window.isSecureContext || !navigator.mediaDevices?.getUserMedia){
+    setStatus("❌ Este navegador no permite la cámara aquí. Abre la página desde una dirección https (ver instrucciones).", "badc");
+    return;
+  }
+  try{
+    if(stream) stream.getTracks().forEach(t=>t.stop());
+    stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:facing, width:{ideal:640}, height:{ideal:480} }, audio:false });
+    video.srcObject = stream; await video.play();
+    $("stage").classList.toggle("mirror", facing==="user");
+    $("startOverlay").style.display="none"; $("flipBtn").style.display="";
+    $("recBtn").disabled = false;
+    setStatus("Cámara encendida. Pon tu mano frente a la cámara.", "ok");
+    requestAnimationFrame(loop);
+  }catch(e){
+    console.error(e);
+    setStatus("❌ No se pudo abrir la cámara. Da permiso de cámara a Chrome y vuelve a intentar.", "badc");
+  }
+}
+$("startBtn").onclick = startCam;
+$("flipBtn").onclick = () => { facing = facing==="user" ? "environment" : "user"; startCam(); };
+
+const CONN = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+function draw(pts){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  if(!pts) return;
+  const W=canvas.width, H=canvas.height;
+  ctx.lineWidth = Math.max(2, W/160); ctx.strokeStyle="#4f8cff";
+  for(const [a,b] of CONN){ ctx.beginPath(); ctx.moveTo(pts[a].x*W, pts[a].y*H); ctx.lineTo(pts[b].x*W, pts[b].y*H); ctx.stroke(); }
+  ctx.fillStyle="#fff";
+  for(const p of pts){ ctx.beginPath(); ctx.arc(p.x*W, p.y*H, Math.max(3, W/130), 0, 7); ctx.fill(); }
+}
+
+function loop(){
+  if(!stream) return;
+  if(video.readyState >= 2 && video.currentTime !== lastVideoTime){
+    lastVideoTime = video.currentTime;
+    if(canvas.width !== video.videoWidth){ canvas.width = video.videoWidth; canvas.height = video.videoHeight; }
+    let res = null;
+    try{ res = landmarker.detectForVideo(video, performance.now()); }catch(e){ console.error(e); }
+    if(res && res.landmarks && res.landmarks.length){
+      const pts = res.landmarks[0];
+      const h = res.handedness?.[0]?.[0]?.categoryName || "Right";
+      const lm = []; for(const p of pts) lm.push(+p.x.toFixed(4), +p.y.toFixed(4), +p.z.toFixed(4));
+      current = { lm, h, pts };
+    } else current = null;
+    draw(current?.pts);
+    onFrame();
+  }
+  requestAnimationFrame(loop);
+}
+
+/* ---------- Grabar ---------- */
+let rec = null; // {letter, got, last}
+$("recBtn").onclick = async () => {
+  if(rec) return;
+  const letter = selected; $("recBtn").disabled = true;
+  for(const n of [3,2,1]){ $("countdown").textContent = n; await new Promise(r=>setTimeout(r,700)); }
+  $("countdown").textContent = "";
+  rec = { letter, got:0, last:0 };
+  setStatus(`Grabando ${letter}… mueve un poquito la mano.`, "warn");
+};
+function onRecFrame(){
+  if(!rec) return;
+  const now = performance.now();
+  if(!current){ setStatus(`Grabando ${rec.letter}… no veo tu mano 👀`, "warn"); return; }
+  if(now - rec.last < 90) return;
+  rec.last = now;
+  db.samples.push({ l:rec.letter, lm:current.lm, h:current.h, t:Date.now() });
+  rec.got++;
+  $("recBar").style.width = (rec.got/PER_LETTER*100)+"%";
+  if(rec.got >= PER_LETTER){
+    save(); model = null;
+    setStatus(`✅ ${PER_LETTER} ejemplos de ${rec.letter} guardados.`, "ok");
+    // avanza sola a la siguiente letra que le falten ejemplos
+    const c = countByLetter();
+    const next = db.letters.find(l => (c[l]||0) < PER_LETTER);
+    if(next) selected = next;
+    rec = null; renderGrid();
+    setTimeout(()=>{ $("recBar").style.width="0"; $("recBtn").disabled=false; }, 600);
+  }
+}
+let undoArmed = 0;
+$("undoBtn").onclick = () => {
+  if(Date.now() - undoArmed > 3000){ undoArmed = Date.now(); $("undoBtn").textContent = `¿Seguro? Toca otra vez`; setTimeout(()=>$("undoBtn").textContent="Borrar esta letra",3000); return; }
+  db.samples = db.samples.filter(s => s.l !== selected); save(); model=null; renderGrid();
+  $("undoBtn").textContent="Borrar esta letra"; undoArmed = 0;
+  setStatus(`Ejemplos de ${selected} borrados.`);
+};
+
+/* ---------- Entrenar ---------- */
+function showReport(r){
+  const box = $("trainReport"); box.style.display="";
+  if(r.error){ box.innerHTML = `<span class="warn">${r.error}</span>`; return; }
+  const pct = x => Math.round(x*100)+"%";
+  const cls = x => x>=0.9 ? "ok" : x>=0.7 ? "warn" : "badc";
+  let h = `<b>Precisión estimada: <span class="${cls(r.acc)}">${pct(r.acc)}</span></b>
+           <p class="mut">${r.use.length} letras · ${r.n} ejemplos. Se calcula probando cada ejemplo contra los demás.</p>
+           <table><tr><th>Letra</th><th>Acierta</th><th></th></tr>`;
+  for(const l of r.use){ const p=r.per[l]; const a=p.ok/p.n; h += `<tr><td><b>${l}</b></td><td class="${cls(a)}">${pct(a)}</td><td class="mut">${p.ok}/${p.n}</td></tr>`; }
+  h += `</table>`;
+  const top = Object.entries(r.conf).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  if(top.length){
+    h += `<p style="margin:12px 0 4px"><b>Las que más confunde</b></p><p class="mut">`;
+    h += top.map(([k,v])=>`${k.replace("→"," la toma como ")} (${v})`).join("<br>");
+    h += `</p><p class="mut">Tip: graba más ejemplos de esas letras, exagerando lo que las hace diferentes.</p>`;
+  }
+  const missing = db.letters.filter(l=>!r.use.includes(l));
+  if(missing.length) h += `<p class="mut">Sin suficientes ejemplos todavía: ${missing.join(", ")}</p>`;
+  box.innerHTML = h;
+}
+$("trainBtn").onclick = () => {
+  $("trainBtn").disabled = true; $("trainBtn").textContent = "Entrenando…";
+  setTimeout(()=>{ const r = train(); showReport(r); $("trainBtn").disabled=false; $("trainBtn").textContent="Entrenar de nuevo";
+    if(!r.error) setStatus("✅ Modelo entrenado. Ve a Reconocer.", "ok"); }, 30);
+};
+
+/* ---------- Reconocer ---------- */
+const hist = []; let stable = { l:null, since:0 }, armed = true, typed = "";
+function onRecogFrame(){
+  if(!model){ return; }
+  if(!current){ hist.length=0; stable={l:null,since:0}; armed=true;
+    $("bigLetter").textContent="·"; $("confBar").style.width="0"; $("confTxt").textContent="No veo ninguna mano"; return; }
+  const r = knn(model.X, model.y, features(current.lm, current.h));
+  const label = (r.nearest > model.thr || r.conf < 0.5) ? null : r.label;
+  hist.push(label); if(hist.length>8) hist.shift();
+  const c = {}; for(const x of hist) if(x) c[x]=(c[x]||0)+1;
+  let best=null, bn=0; for(const k in c) if(c[k]>bn){ bn=c[k]; best=k; }
+  const show = bn>=5 ? best : null;
+  $("bigLetter").textContent = show || "?";
+  $("confBar").style.width = (show ? r.conf*100 : 0)+"%";
+  $("confTxt").textContent = show ? `Seguridad ${Math.round(r.conf*100)}%` : "No estoy seguro…";
+  const now = performance.now();
+  if(show !== stable.l){ if(stable.l !== null) armed = true; stable = { l:show, since:now }; }
+  else if(show && armed && now - stable.since > 1000){ typed += show; armed = false; $("typed").textContent = typed; }
+}
+$("spaceBtn").onclick = ()=>{ typed += " "; $("typed").textContent = typed; };
+$("backBtn").onclick  = ()=>{ typed = typed.slice(0,-1); $("typed").textContent = typed; };
+$("clearBtn").onclick = ()=>{ typed = ""; $("typed").textContent = ""; };
+
+function onFrame(){
+  if(rec) onRecFrame();
+  else if(tab==="reconocer") onRecogFrame();
+}
+
+/* ---------- Datos ---------- */
+$("exportBtn").onclick = () => {
+  const blob = new Blob([JSON.stringify(db)], {type:"application/json"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `senas-lsm-respaldo-${new Date().toISOString().slice(0,10)}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  $("dataMsg").textContent = `Respaldo con ${db.samples.length} ejemplos descargado.`;
+};
+$("importInp").onchange = async e => {
+  const f = e.target.files[0]; if(!f) return;
+  try{
+    const d = JSON.parse(await f.text());
+    if(!Array.isArray(d.samples)) throw 0;
+    const seen = new Set(db.samples.map(s=>s.t+"|"+s.l));
+    let added = 0;
+    for(const s of d.samples) if(s && s.l && Array.isArray(s.lm) && s.lm.length===63 && !seen.has(s.t+"|"+s.l)){ db.samples.push(s); added++; }
+    if(Array.isArray(d.letters)) for(const l of d.letters) if(!db.letters.includes(l)) db.letters.push(l);
+    save(); model=null; renderGrid();
+    $("dataMsg").textContent = `Importados ${added} ejemplos nuevos.`;
+  }catch(err){ $("dataMsg").textContent = "Ese archivo no es un respaldo válido."; }
+  e.target.value = "";
+};
+$("lettersSave").onclick = () => {
+  const ls = [...new Set($("lettersInp").value.split(",").map(s=>s.trim().toUpperCase()).filter(Boolean))];
+  if(ls.length < 2){ $("dataMsg").textContent = "Pon al menos 2 letras."; return; }
+  db.letters = ls; save(); model=null; renderGrid(); setStatus("Letras guardadas.", "ok");
+};
+let wipeArmed = 0;
+$("wipeBtn").onclick = () => {
+  if(Date.now() - wipeArmed > 3000){ wipeArmed = Date.now(); $("wipeBtn").textContent="¿Seguro? Toca otra vez para borrar TODO"; setTimeout(()=>$("wipeBtn").textContent="Borrar todos los ejemplos",3000); return; }
+  db.samples = []; save(); model=null; renderGrid(); $("wipeBtn").textContent="Borrar todos los ejemplos"; wipeArmed=0;
+  setStatus("Todos los ejemplos fueron borrados.");
+};
+
+initModel();
+</script>
+</body>
+</html>
